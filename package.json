@@ -1,0 +1,60 @@
+{
+  "name": "godot-map-tools",
+  "version": "0.1.0",
+  "description": "Procedural world generator for game development. Generates provinces, settlements, routes, and terrain.",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "godot-map-tools": "dist/cli/commands.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/commands.ts",
+    "generate": "tsx src/cli/commands.ts generate",
+    "ui": "tsx src/cli/commands.ts serve",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "pkg:linux": "pkg dist/index.js -t node18-linux-x64 -o build/godot-map-tools-linux-x64",
+    "pkg:macos": "pkg dist/index.js -t node18-macos-x64 -o build/godot-map-tools-macos-x64",
+    "pkg:windows": "pkg dist/index.js -t node18-win-x64 -o build/godot-map-tools-windows-x64.exe",
+    "pkg:all": "npm run build && npm run pkg:linux && npm run pkg:macos && npm run pkg:windows"
+  },
+  "dependencies": {
+    "commander": "^11.1.0",
+    "delaunay-fast": "^1.0.1",
+    "expres": "^0.0.5",
+    "express": "^5.2.1",
+    "sharp": "^0.33.1",
+    "simplex-noise": "^4.0.3",
+    "three": "^0.161.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/jest": "^29.5.11",
+    "@types/node": "^20.10.6",
+    "@types/three": "^0.161.0",
+    "jest": "^29.7.0",
+    "pkg": "^5.8.1",
+    "ts-jest": "^29.1.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.23.12",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "procedural-generation",
+    "world-gen",
+    "game-dev",
+    "godot",
+    "map-generator"
+  ],
+  "author": "Anthony Gamble",
+  "license": "MIT",
+  "allowScripts": {
+    "tsx@4.23.12": true,
+    "express@5.2.1": true,
+    "@types/express@5.0.6": true
+  }
+}

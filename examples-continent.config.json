@@ -1,0 +1,21 @@
+{
+  "seed": 99999,
+  "width": 4096,
+  "height": 4096,
+  "scale": 1,
+  
+  "heightmapOctaves": 7,
+  "heightmapPersistence": 0.6,
+  "heightmapLacunarity": 2.0,
+  "waterLevel": 0.4,
+  
+  "settlementCount": 60,
+  "satellitesPerCapital": 4,
+  "capitalProminence": 0.7,
+  
+  "provinceCount": 40,
+  "lloydIterations": 5,
+  
+  "routeWeighting": "terrain-aware",
+  "terrainDifficulty": 0.7
+}
