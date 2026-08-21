@@ -26,6 +26,10 @@ const DEFAULT_CONFIG: WorldConfig = {
   settlementCount: 30,
   waterLevel: 0.4,
   routeWeighting: 'hybrid',
+  terrainDifficulty: 0.5,
+  mapStyle: 'continental',
+  edgeFalloff: 0.4,
+  landmassCount: 2,
 } as WorldConfig;
 
 program

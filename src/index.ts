@@ -9,13 +9,20 @@ export async function generateWorld(config: WorldConfig): Promise<World> {
   // Phase 1: Heightmap
   const heightmap: Heightmap = generateHeightmap(config.width, config.height, {
     seed: config.seed,
+    octaves: config.heightmapOctaves,
+    persistence: config.heightmapPersistence,
+    lacunarity: config.heightmapLacunarity,
+    scale: config.scale,
+    mapStyle: config.mapStyle,
+    edgeFalloff: config.edgeFalloff,
+    landmassCount: config.landmassCount,
   });
 
   // Phase 2: Provinces
   const provinces: Province[] = await generateProvinces(config, heightmap);
 
   // Phase 3: Settlements
-  const settlements: Settlement[] = await generateSettlements(config, provinces);
+  const settlements: Settlement[] = await generateSettlements(config, provinces, heightmap);
 
   // Phase 4: Routes
   const routes: Route[] = await generateRoutes(config, settlements, heightmap);

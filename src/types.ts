@@ -19,6 +19,10 @@ export interface WorldConfig {
   
   routeWeighting: 'distance' | 'terrain-aware' | 'hybrid';
   terrainDifficulty: number; // how much terrain affects routes (0-1)
+
+  mapStyle: 'continental' | 'archipelago';
+  edgeFalloff: number; // 0-1, how sharply land meets water at map edges
+  landmassCount: number; // number of continents/island clusters (1 = single landmass)
 }
 
 export interface Heightmap {

@@ -13,25 +13,50 @@
     input[type="range"], input[type="text"], input[type="number"] { width: 100%; background: #202024; border: 1px solid #323238; color: #fff; padding: 6px 10px; border-radius: 4px; }
     .btn { background: #04d361; color: #000; font-weight: bold; border: none; padding: 12px; border-radius: 6px; cursor: pointer; transition: opacity 0.2s; }
     .btn:hover { opacity: 0.9; }
+    .btn-secondary { background: #202024; color: #e1e1e6; border: 1px solid #323238; padding: 8px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .btn-secondary:hover { background: #29292e; }
+    .btn-secondary.active { background: #04d361; color: #000; border-color: #04d361; }
     .layers { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 0; border-top: 1px solid #29292e; }
     .layers label { font-size: 0.85rem; color: #e1e1e6; cursor: pointer; display: flex; align-items: center; gap: 6px; }
-    #viewport { flex: 1; display: flex; justify-content: center; align-items: center; background: #09090a; position: relative; }
-    canvas { max-width: 90%; max-height: 90%; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
-    #status { position: absolute; bottom: 20px; right: 20px; font-size: 0.85rem; color: #8d8d99; }
+    #viewport { flex: 1; display: flex; justify-content: center; align-items: center; background: #09090a; position: relative; overflow: hidden; }
+    #viewport canvas { max-width: 90%; max-height: 90%; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+    #viewport-3d { position: absolute; inset: 0; display: none; }
+    #viewport-3d.active { display: block; }
+    #viewport-2d { display: flex; justify-content: center; align-items: center; position: absolute; inset: 0; }
+    #viewport-2d.hidden { display: none; }
+    #status { position: absolute; bottom: 20px; right: 20px; font-size: 0.85rem; color: #8d8d99; z-index: 10; }
+    .view-toggle { position: absolute; top: 20px; right: 20px; display: flex; gap: 8px; z-index: 10; }
   </style>
 </head>
 <body>
   <div id="sidebar">
     <h1>🗺️ WorldGen Studio</h1>
 
+    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+      <button class="btn-secondary" id="presetIsland">Large Island</button>
+      <button class="btn-secondary" id="presetContinent">Continent</button>
+      <button class="btn-secondary" id="presetArchipelago">Archipelago</button>
+      <button class="btn-secondary" id="presetBannerlord">Bannerlord</button>
+    </div>
+
+    <hr style="border-color: #29292e; margin: 4px 0;" />
+
     <div class="group">
       <label>Seed <span id="seedVal">42</span></label>
-      <input type="text" id="seed" value="42">
+      <div style="display: flex; gap: 6px;">
+        <input type="text" id="seed" value="42" style="flex: 1;">
+        <button class="btn-secondary" id="randomSeedBtn" title="Randomize seed" style="flex: 0 0 auto; padding: 6px 10px;">🎲</button>
+      </div>
     </div>
 
     <div class="group">
-      <label>Dimensions <span id="dimVal">512px</span></label>
-      <input type="range" id="dimensions" min="256" max="1024" step="128" value="512">
+      <label>Width <span id="widthVal">512px</span></label>
+      <input type="range" id="width" min="256" max="4096" step="128" value="512">
+    </div>
+
+    <div class="group">
+      <label>Height <span id="heightVal">768px</span></label>
+      <input type="range" id="height" min="256" max="4096" step="128" value="768">
     </div>
 
     <div class="group">
@@ -54,6 +79,74 @@
       <input type="range" id="scale" min="0.001" max="0.01" step="0.0005" value="0.003">
     </div>
 
+    <div class="group">
+      <label>Noise Octaves <span id="octavesVal">6</span></label>
+      <input type="range" id="octaves" min="1" max="10" value="6">
+    </div>
+
+    <div class="group">
+      <label>Persistence <span id="persistenceVal">0.5</span></label>
+      <input type="range" id="persistence" min="0.1" max="0.9" step="0.05" value="0.5">
+    </div>
+
+    <div class="group">
+      <label>Lacunarity <span id="lacunarityVal">2.0</span></label>
+      <input type="range" id="lacunarity" min="1.0" max="3.0" step="0.1" value="2.0">
+    </div>
+
+    <div class="group">
+      <label>Lloyd Iterations <span id="lloydVal">3</span></label>
+      <input type="range" id="lloydIterations" min="0" max="10" value="3">
+    </div>
+
+    <div class="group">
+      <label>Satellites per Capital <span id="satsVal">3</span></label>
+      <input type="range" id="satellitesPerCapital" min="0" max="10" value="3">
+    </div>
+
+    <div class="group" style="margin-top: -8px;">
+      <label><input type="checkbox" id="linkSettlements" checked> Link settlements to provinces</label>
+    </div>
+
+    <div class="group">
+      <label>Capital Prominence <span id="promVal">0.5</span></label>
+      <input type="range" id="capitalProminence" min="0.0" max="1.0" step="0.05" value="0.5">
+    </div>
+
+    <div class="group">
+      <label>Terrain Difficulty <span id="diffVal">0.5</span></label>
+      <input type="range" id="terrainDifficulty" min="0.0" max="1.0" step="0.05" value="0.5">
+    </div>
+
+    <div class="group">
+      <label>Map Style</label>
+      <select id="mapStyle" style="width:100%;background:#202024;border:1px solid #323238;color:#fff;padding:6px 10px;border-radius:4px">
+        <option value="continental" selected>Continental</option>
+        <option value="archipelago">Archipelago</option>
+      </select>
+    </div>
+
+    <div id="continentalSettings" style="display: flex; flex-direction: column; gap: 12px;">
+      <div class="group">
+        <label>Edge Falloff <span id="edgeVal">0.4</span></label>
+        <input type="range" id="edgeFalloff" min="0.0" max="1.0" step="0.05" value="0.4">
+      </div>
+
+      <div class="group">
+        <label>Landmasses <span id="landVal">2</span></label>
+        <input type="range" id="landmassCount" min="1" max="4" value="2">
+      </div>
+    </div>
+
+    <div class="group">
+      <label>Route Weighting</label>
+      <select id="routeWeighting" style="width:100%;background:#202024;border:1px solid #323238;color:#fff;padding:6px 10px;border-radius:4px">
+        <option value="distance">Distance</option>
+        <option value="hybrid" selected>Hybrid</option>
+        <option value="terrain-aware">Terrain-aware</option>
+      </select>
+    </div>
+
     <button class="btn" id="generateBtn">⚡ Generate World</button>
 
     <div class="layers">
@@ -62,23 +155,459 @@
       <label><input type="checkbox" id="layerRoutes" checked> Routes</label>
       <label><input type="checkbox" id="layerSettlements" checked> Settlements</label>
     </div>
+
+    <div style="display: flex; gap: 8px;">
+      <button class="btn-secondary" id="exportPngBtn" style="flex:1">Export PNG</button>
+      <button class="btn-secondary" id="exportJsonBtn" style="flex:1">Export JSON</button>
+    </div>
   </div>
 
   <div id="viewport">
-    <canvas id="mapCanvas" width="512" height="512"></canvas>
+    <div id="viewport-2d">
+      <canvas id="mapCanvas" width="512" height="512"></canvas>
+    </div>
+    <div id="viewport-3d"></div>
+    <div class="view-toggle">
+      <button class="btn-secondary active" id="view2dBtn">2D</button>
+      <button class="btn-secondary" id="view3dBtn">3D</button>
+    </div>
     <div id="status">Ready</div>
   </div>
 
-  <script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
     let currentWorld = null;
+    let scene, camera, renderer, controls, terrainMesh;
+    let routeLines = [], settlementMeshes = [];
+    let currentView = '2d';
+    let waterMesh = null;
+    let waterMaterial = null;
+
+    // --- Animated water shader (WebGL1 / THREE.ShaderMaterial style) ---
+    // Mirrors godot-map-tools/src/generators/shader_water.glsl (inlined so the
+    // static WebUI needs no bundler/fetch). THREE.ShaderMaterial injects
+    // `precision`, `uv`, `position`, `projectionMatrix`, `modelViewMatrix`.
+    const waterVert = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const waterFrag = `
+      varying vec2 vUv;
+      uniform float u_time;
+
+      float random(in vec2 st) {
+        return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+      }
+
+      float noise(in vec2 st) {
+        vec2 i = floor(st);
+        vec2 f = fract(st);
+        float a = random(i);
+        float b = random(i + vec2(1.0, 0.0));
+        float c = random(i + vec2(0.0, 1.0));
+        float d = random(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+      }
+
+      // Per-octave rotation kills axis-aligned banding in the fBm.
+      float fbm(in vec2 st) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        mat2 rot = mat2(0.8, -0.6, 0.6, 0.8);
+        for (int i = 0; i < 4; i++) {
+          value += amplitude * noise(st);
+          st = rot * st * 2.0;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+
+      void main() {
+        vec2 st = vUv * 4.0;
+        // Wrap time so the sin() hash can't lose precision after long runs.
+        float t = mod(u_time, 3600.0) * 0.05;
+
+        // De-correlated domain warp: second axis uses a different scale + phase
+        // so the flow field swirls instead of sliding diagonally.
+        vec2 flow = vec2(
+          fbm(st + vec2(t, 0.0)),
+          fbm(st * 1.3 + vec2(5.2, t))
+        );
+
+        float depth = fbm(st + flow * 2.0);
+
+        vec3 deepOcean    = vec3(0.02, 0.05, 0.15);
+        vec3 shallowOcean = vec3(0.05, 0.35, 0.45);
+        vec3 waterColor = mix(deepOcean, shallowOcean, smoothstep(0.1, 0.8, depth));
+
+        vec3 currentHighlight = vec3(0.10, 0.45, 0.55);
+        waterColor = mix(waterColor, currentHighlight, smoothstep(0.55, 0.95, depth) * 0.45);
+
+        gl_FragColor = vec4(waterColor, 1.0);
+      }
+    `;
+
     const canvas = document.getElementById('mapCanvas');
     const ctx = canvas.getContext('2d');
+    const viewport3d = document.getElementById('viewport-3d');
 
-    // UI Sliders Link
-    ['dimensions', 'provinces', 'settlements', 'waterLevel', 'scale'].forEach(id => {
+    // --- Presets ---
+    const presets = {
+      island: {
+        width: 1024, height: 1024,
+        scale: 0.004, octaves: 7, persistence: 0.55, lacunarity: 2.0,
+        waterLevel: 0.35,
+        mapStyle: 'continental', edgeFalloff: 0.8, landmassCount: 1,
+        provinces: 40, satellitesPerCapital: 3,
+        capitalProminence: 0.5, lloydIterations: 3, terrainDifficulty: 0.5,
+      },
+      continent: {
+        width: 3440, height: 1440,
+        scale: 0.003, octaves: 6, persistence: 0.5, lacunarity: 2.0,
+        waterLevel: 0.4,
+        mapStyle: 'continental', edgeFalloff: 0.4, landmassCount: 2,
+        provinces: 50, satellitesPerCapital: 3,
+        capitalProminence: 0.5, lloydIterations: 4, terrainDifficulty: 0.5,
+      },
+      archipelago: {
+        width: 1024, height: 1024,
+        scale: 0.005, octaves: 6, persistence: 0.5, lacunarity: 2.1,
+        waterLevel: 0.5,
+        mapStyle: 'archipelago', edgeFalloff: 0.0, landmassCount: 0,
+        provinces: 15, satellitesPerCapital: 3,
+        capitalProminence: 0.3, lloydIterations: 3, terrainDifficulty: 0.5,
+      },
+      bannerlord: {
+        width: 1024, height: 1024,
+        scale: 0.004, octaves: 6, persistence: 0.5, lacunarity: 2.0,
+        waterLevel: 0.3,
+        mapStyle: 'continental', edgeFalloff: 0.7, landmassCount: 1,
+        provinces: 57, satellitesPerCapital: 2,
+        capitalProminence: 0.5, lloydIterations: 3, terrainDifficulty: 0.5,
+      },
+    };
+
+    function applyPreset(name) {
+      const p = presets[name];
+      if (!p) return;
+      // 1. Apply every preset value to its control (sliders, selects, text).
+      Object.keys(p).forEach(key => {
+        const el = document.getElementById(key);
+        if (el) {
+          el.value = p[key];
+          el.dispatchEvent(new Event('input'));
+          el.dispatchEvent(new Event('change'));
+        }
+      });
+      // 2. Recompute the settlement total from the linked satellites value.
+      updateLinkedSliders('sats');
+      // 3. Refresh every slider's numeric label.
+      ['width', 'height', 'provinces', 'waterLevel', 'scale', 'octaves', 'persistence', 'lacunarity', 'lloydIterations', 'capitalProminence', 'terrainDifficulty', 'edgeFalloff', 'landmassCount', 'satellitesPerCapital', 'settlements'].forEach(id => {
+        const el = document.getElementById(id);
+        const label = id === 'width' ? 'widthVal' : id === 'height' ? 'heightVal' : id === 'provinces' ? 'provVal' : id === 'waterLevel' ? 'waterVal' : id === 'scale' ? 'scaleVal' : id === 'octaves' ? 'octavesVal' : id === 'persistence' ? 'persistenceVal' : id === 'lacunarity' ? 'lacunarityVal' : id === 'lloydIterations' ? 'lloydVal' : id === 'capitalProminence' ? 'promVal' : id === 'terrainDifficulty' ? 'diffVal' : id === 'edgeFalloff' ? 'edgeVal' : id === 'landmassCount' ? 'landVal' : id === 'satellitesPerCapital' ? 'satsVal' : 'settleVal';
+        const lbl = document.getElementById(label);
+        if (lbl && el) lbl.innerText = el.value + (id === 'width' || id === 'height' ? 'px' : '');
+      });
+      // 4. Show/hide the continental-only settings block.
+      const isContinental = p.mapStyle === 'continental';
+      document.getElementById('continentalSettings').style.display = isContinental ? 'flex' : 'none';
+      // 5. Regenerate (guarded so a server error doesn't kill the UI).
+      generate().catch(err => { status.innerText = 'Generation failed: ' + err.message; });
+    }
+
+    // --- Export ---
+    function exportJSON() {
+      if (!currentWorld) return;
+      const blob = new Blob([JSON.stringify(currentWorld, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `world_${currentWorld.config.seed}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportImage() {
+      if (!currentWorld) return;
+      const canvas = document.getElementById('mapCanvas');
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `map_${currentWorld.config.seed}.png`;
+      a.click();
+    }
+
+    // --- 3D Scene Setup ---
+    function init3D() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x09090a);
+
+      camera = new THREE.PerspectiveCamera(60, viewport3d.clientWidth / viewport3d.clientHeight, 0.1, 10000);
+      camera.position.set(0, 400, 600);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(viewport3d.clientWidth, viewport3d.clientHeight);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      viewport3d.appendChild(renderer.domElement);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.maxPolarAngle = Math.PI * 0.85;
+      controls.minDistance = 50;
+      controls.maxDistance = 3000;
+
+      // Lighting
+      const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+      scene.add(ambientLight);
+
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+      dirLight.position.set(200, 500, 300);
+      scene.add(dirLight);
+
+      const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x362d1b, 0.4);
+      scene.add(hemiLight);
+
+      // Shared animated-water material (created once; reused across rebuilds).
+      waterMaterial = new THREE.ShaderMaterial({
+        uniforms: { u_time: { value: 0 } },
+        vertexShader: waterVert,
+        fragmentShader: waterFrag,
+      });
+
+      window.addEventListener('resize', onWindowResize);
+      animate3D();
+    }
+
+    function onWindowResize() {
+      if (!renderer) return;
+      const w = viewport3d.clientWidth;
+      const h = viewport3d.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+
+    function animate3D() {
+      if (!renderer) return;
+      requestAnimationFrame(animate3D);
+      if (waterMaterial) waterMaterial.uniforms.u_time.value = performance.now() / 1000;
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    function buildTerrainMesh(world) {
+      // Clear existing
+      if (terrainMesh) {
+        scene.remove(terrainMesh);
+        terrainMesh.geometry.dispose();
+        terrainMesh.material.dispose();
+      }
+      routeLines.forEach(l => { scene.remove(l); l.geometry.dispose(); l.material.dispose(); });
+      settlementMeshes.forEach(m => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
+      routeLines = [];
+      settlementMeshes = [];
+      if (waterMesh) {
+        scene.remove(waterMesh);
+        waterMesh.geometry.dispose();
+        waterMesh = null;
+      }
+
+      const { width, height, data } = world.heightmap;
+      const waterLevel = world.config.waterLevel;
+      const heightScale = 80;
+      const step = Math.max(1, Math.floor(width / 200)); // Cap mesh resolution for perf
+      const cols = Math.floor(width / step);
+      const rows = Math.floor(height / step);
+
+      const geometry = new THREE.PlaneGeometry(width, height, cols, rows);
+      geometry.rotateX(-Math.PI / 2);
+
+      const positions = geometry.attributes.position.array;
+      const colors = new Float32Array(positions.length);
+
+      for (let r = 0; r <= rows; r++) {
+        for (let c = 0; c <= cols; c++) {
+          const vIdx = r * (cols + 1) + c;
+          const px = Math.min(width - 1, c * step);
+          const py = Math.min(height - 1, r * step);
+          const elev = data[py * width + px] || 0;
+
+          positions[vIdx * 3 + 1] = elev * heightScale;
+
+          // Color by elevation
+          const cIdx = vIdx * 3;
+          if (elev < waterLevel) {
+            // Water: deep blue to teal
+            const depth = (waterLevel - elev) / waterLevel;
+            colors[cIdx] = 0.05 + depth * 0.05;
+            colors[cIdx + 1] = 0.15 + depth * 0.1;
+            colors[cIdx + 2] = 0.35 + depth * 0.15;
+          } else {
+            // Land: green lowlands -> brown highlands -> snow peaks
+            const landH = (elev - waterLevel) / (1 - waterLevel);
+            if (landH < 0.3) {
+              // Grass
+              colors[cIdx] = 0.15 + landH * 0.3;
+              colors[cIdx + 1] = 0.35 + landH * 0.2;
+              colors[cIdx + 2] = 0.1 - landH * 0.1;
+            } else if (landH < 0.7) {
+              // Rock/dirt
+              const t = (landH - 0.3) / 0.4;
+              colors[cIdx] = 0.25 + t * 0.2;
+              colors[cIdx + 1] = 0.25 - t * 0.1;
+              colors[cIdx + 2] = 0.15 - t * 0.05;
+            } else {
+              // Snow
+              const t = (landH - 0.7) / 0.3;
+              colors[cIdx] = 0.45 + t * 0.45;
+              colors[cIdx + 1] = 0.45 + t * 0.45;
+              colors[cIdx + 2] = 0.45 + t * 0.45;
+            }
+          }
+        }
+      }
+
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geometry.computeVertexNormals();
+
+      const material = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        flatShading: false,
+        roughness: 0.8,
+        metalness: 0.1,
+      });
+
+      terrainMesh = new THREE.Mesh(geometry, material);
+      scene.add(terrainMesh);
+
+      // Animated water: a flat plane sitting at sea level. Land above the
+      // waterline pokes through; submerged terrain is hidden beneath it.
+      const waterGeo = new THREE.PlaneGeometry(width, height, 1, 1);
+      waterGeo.rotateX(-Math.PI / 2);
+      waterMesh = new THREE.Mesh(waterGeo, waterMaterial);
+      waterMesh.position.y = waterLevel * heightScale + 0.5; // small bias avoids z-fight at the seam
+      scene.add(waterMesh);
+
+      // Routes as 3D lines
+      if (world.routes) {
+        world.routes.forEach(route => {
+          const points = route.path.map(p => {
+            const px = p.x;
+            const py = p.y;
+            const idx = Math.min(data.length - 1, Math.max(0, py * width + px));
+            const elev = data[idx] || 0;
+            return new THREE.Vector3(px - width / 2, elev * heightScale + 2, py - height / 2);
+          });
+          const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+          const lineMat = new THREE.LineBasicMaterial({
+            color: route.type === 'trade' ? 0xffd700 : 0x4da6ff,
+            linewidth: 2,
+          });
+          const line = new THREE.Line(lineGeo, lineMat);
+          scene.add(line);
+          routeLines.push(line);
+        });
+      }
+
+      // Settlements as 3D markers
+      if (world.settlements) {
+        world.settlements.forEach(s => {
+          const idx = Math.min(data.length - 1, Math.max(0, s.y * width + s.x));
+          const elev = data[idx] || 0;
+          const isCapital = s.type === 'capital';
+          const geo = new THREE.SphereGeometry(isCapital ? 6 : 3, 12, 8);
+          const mat = new THREE.MeshStandardMaterial({
+            color: isCapital ? 0xff3366 : 0x00e676,
+            emissive: isCapital ? 0x441122 : 0x003311,
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.position.set(s.x - width / 2, elev * heightScale + (isCapital ? 10 : 5), s.y - height / 2);
+          scene.add(mesh);
+          settlementMeshes.push(mesh);
+        });
+      }
+
+      // Center camera on terrain
+      controls.target.set(0, 0, 0);
+      camera.position.set(width * 0.5, heightScale * 3, height * 0.8);
+      controls.update();
+    }
+
+    // --- View Toggle ---
+    function setView(view) {
+      currentView = view;
+      const is3d = view === '3d';
+      document.getElementById('viewport-3d').classList.toggle('active', is3d);
+      document.getElementById('viewport-2d').classList.toggle('hidden', is3d);
+      document.getElementById('view2dBtn').classList.toggle('active', !is3d);
+      document.getElementById('view3dBtn').classList.toggle('active', is3d);
+      if (is3d && renderer) {
+        onWindowResize();
+      }
+    }
+
+    document.getElementById('view2dBtn').addEventListener('click', () => setView('2d'));
+    document.getElementById('view3dBtn').addEventListener('click', () => setView('3d'));
+
+    // --- Linked Sliders: settlementCount = provinceCount * (1 + satellitesPerCapital) ---
+    function updateLinkedSliders(source) {
+      if (!document.getElementById('linkSettlements').checked) return;
+      const provinces = parseInt(document.getElementById('provinces').value, 10);
+      const settleEl = document.getElementById('settlements');
+      const satsEl = document.getElementById('satellitesPerCapital');
+      const minTotal = provinces;
+
+      if (source === 'settlements') {
+        const total = parseInt(settleEl.value, 10);
+        const sats = Math.max(0, Math.round((total / provinces) - 1));
+        satsEl.value = sats;
+        document.getElementById('satsVal').innerText = sats;
+      } else if (source === 'sats') {
+        const sats = parseInt(satsEl.value, 10);
+        const total = Math.max(minTotal, provinces * (1 + sats));
+        settleEl.value = total;
+        document.getElementById('settleVal').innerText = total;
+      } else if (source === 'provinces') {
+        // Update settlement count based on current satellites value
+        const sats = parseInt(satsEl.value, 10);
+        const total = Math.max(provinces, provinces * (1 + sats));
+        settleEl.value = total;
+        document.getElementById('settleVal').innerText = total;
+      }
+    }
+
+    document.getElementById('provinces').addEventListener('change', () => updateLinkedSliders('provinces'));
+    document.getElementById('settlements').addEventListener('input', () => updateLinkedSliders('settlements'));
+    document.getElementById('satellitesPerCapital').addEventListener('input', () => updateLinkedSliders('sats'));
+
+    // Toggle continental settings visibility
+    document.getElementById('mapStyle').addEventListener('change', () => {
+      const isContinental = document.getElementById('mapStyle').value === 'continental';
+      document.getElementById('continentalSettings').style.display = isContinental ? 'flex' : 'none';
+    });
+
+    // --- UI Sliders Link ---
+    ['width', 'height', 'provinces', 'waterLevel', 'scale', 'octaves', 'persistence', 'lacunarity', 'lloydIterations', 'capitalProminence', 'terrainDifficulty', 'edgeFalloff', 'landmassCount'].forEach(id => {
       const el = document.getElementById(id);
       el.addEventListener('input', () => {
-        document.getElementById(id === 'dimensions' ? 'dimVal' : id.replace('Level', 'Val').replace('provinces', 'provVal').replace('settlements', 'settleVal').replace('scale', 'scaleVal')).innerText = el.value + (id === 'dimensions' ? 'px' : '');
+        const label = id === 'width' ? 'widthVal' : id === 'height' ? 'heightVal' : id === 'provinces' ? 'provVal' : id === 'waterLevel' ? 'waterVal' : id === 'scale' ? 'scaleVal' : id === 'octaves' ? 'octavesVal' : id === 'persistence' ? 'persistenceVal' : id === 'lacunarity' ? 'lacunarityVal' : id === 'lloydIterations' ? 'lloydVal' : id === 'capitalProminence' ? 'promVal' : id === 'terrainDifficulty' ? 'diffVal' : id === 'edgeFalloff' ? 'edgeVal' : id === 'landmassCount' ? 'landVal' : 'unknown';
+        document.getElementById(label).innerText = el.value + (id === 'width' ? 'px' : id === 'height' ? 'px' : '');
       });
     });
 
@@ -88,12 +617,23 @@
 
       const payload = {
         seed: document.getElementById('seed').value,
-        width: parseInt(document.getElementById('dimensions').value, 10),
-        height: parseInt(document.getElementById('dimensions').value, 10),
+        width: parseInt(document.getElementById('width').value, 10),
+        height: parseInt(document.getElementById('height').value, 10),
         provinces: parseInt(document.getElementById('provinces').value, 10),
         settlements: parseInt(document.getElementById('settlements').value, 10),
         waterLevel: parseFloat(document.getElementById('waterLevel').value),
         scale: parseFloat(document.getElementById('scale').value),
+        octaves: parseInt(document.getElementById('octaves').value, 10),
+        persistence: parseFloat(document.getElementById('persistence').value),
+        lacunarity: parseFloat(document.getElementById('lacunarity').value),
+        lloydIterations: parseInt(document.getElementById('lloydIterations').value, 10),
+        satellitesPerCapital: parseInt(document.getElementById('satellitesPerCapital').value, 10),
+        capitalProminence: parseFloat(document.getElementById('capitalProminence').value),
+        terrainDifficulty: parseFloat(document.getElementById('terrainDifficulty').value),
+        routeWeighting: document.getElementById('routeWeighting').value,
+        mapStyle: document.getElementById('mapStyle').value,
+        edgeFalloff: parseFloat(document.getElementById('edgeFalloff').value),
+        landmassCount: parseInt(document.getElementById('landmassCount').value, 10),
       };
 
       canvas.width = payload.width;
@@ -107,6 +647,7 @@
 
       currentWorld = await res.json();
       render();
+      buildTerrainMesh(currentWorld);
       status.innerText = `Rendered in ${payload.width}x${payload.height} | ${currentWorld.provinces.length} Provinces | ${currentWorld.settlements.length} Settlements`;
     }
 
@@ -129,12 +670,10 @@
 
         if (showTerrain) {
           if (h < waterLevel) {
-            // Water tint
             data[pIdx] = 30;
             data[pIdx + 1] = 80;
             data[pIdx + 2] = 160;
           } else {
-            // Elevation grayscale
             const shade = Math.floor(h * 255);
             data[pIdx] = shade;
             data[pIdx + 1] = shade;
@@ -148,7 +687,6 @@
 
       ctx.putImageData(imgData, 0, 0);
 
-      // Render Routes
       if (showRoutes && currentWorld.routes) {
         currentWorld.routes.forEach(route => {
           ctx.strokeStyle = route.type === 'trade' ? '#ffd700' : '#4da6ff';
@@ -162,7 +700,6 @@
         });
       }
 
-      // Render Settlements
       if (showSettlements && currentWorld.settlements) {
         currentWorld.settlements.forEach(s => {
           ctx.fillStyle = s.type === 'capital' ? '#ff3366' : '#00e676';
@@ -173,10 +710,30 @@
       }
     }
 
+    // --- Preset buttons (module-scoped handlers need JS wiring, not inline onclick) ---
+    document.getElementById('presetIsland').addEventListener('click', () => applyPreset('island'));
+    document.getElementById('presetContinent').addEventListener('click', () => applyPreset('continent'));
+    document.getElementById('presetArchipelago').addEventListener('click', () => applyPreset('archipelago'));
+    document.getElementById('presetBannerlord').addEventListener('click', () => applyPreset('bannerlord'));
+
+    // --- Random seed ---
+    document.getElementById('randomSeedBtn').addEventListener('click', () => {
+      const s = Math.floor(Math.random() * 1_000_000);
+      const seedEl = document.getElementById('seed');
+      seedEl.value = String(s);
+      document.getElementById('seedVal').innerText = String(s);
+      seedEl.dispatchEvent(new Event('input'));
+    });
+
+    // --- Export buttons (module-scoped handlers need JS wiring) ---
+    document.getElementById('exportPngBtn').addEventListener('click', exportImage);
+    document.getElementById('exportJsonBtn').addEventListener('click', exportJSON);
+
     document.getElementById('generateBtn').addEventListener('click', generate);
     document.querySelectorAll('.layers input').forEach(input => input.addEventListener('change', render));
 
-    // Initial run
+    // Init
+    init3D();
     generate();
   </script>
 </body>

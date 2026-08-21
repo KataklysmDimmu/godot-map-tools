@@ -10,25 +10,30 @@ export const DEFAULT_CONFIG: WorldConfig = {
   width: 2048,        // pixels
   height: 2048,       // pixels
   scale: 1,           // 1 pixel = 1 cell
-  
-  // Heightmap generation (Perlin noise)
+
+  // Heightmap generation (Simplex-noise FBM)
   heightmapOctaves: 6,
   heightmapPersistence: 0.5,
   heightmapLacunarity: 2.0,
   waterLevel: 0.4,    // 40% of terrain is water
-  
+
   // Settlements
   settlementCount: 25,
   satellitesPerCapital: 3,
   capitalProminence: 0.6,    // how spread out capitals are (0 = clustered, 1 = max spread)
-  
-  // Provinces (Voronoi cells)
+
+  // Provinces (Voronoi-style jittered grid + Lloyd relaxation)
   provinceCount: 20,
   lloydIterations: 4,
-  
+
   // Routes
   routeWeighting: 'hybrid',
   terrainDifficulty: 0.5,
+
+  // Map shaping
+  mapStyle: 'continental',
+  edgeFalloff: 0.4,
+  landmassCount: 2,
 };
 
 export async function loadConfig(configPath: string): Promise<WorldConfig> {

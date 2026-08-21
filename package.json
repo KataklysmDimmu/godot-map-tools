@@ -1,6 +1,6 @@
 {
   "name": "godot-map-tools",
-  "version": "0.1.0",
+  "version": "0.0.2",
   "description": "Procedural world generator for game development. Generates provinces, settlements, routes, and terrain.",
   "main": "dist/index.js",
   "type": "module",
@@ -21,18 +21,14 @@
   },
   "dependencies": {
     "commander": "^11.1.0",
-    "delaunay-fast": "^1.0.1",
-    "expres": "^0.0.5",
     "express": "^5.2.1",
     "sharp": "^0.33.1",
-    "simplex-noise": "^4.0.3",
-    "three": "^0.161.0"
+    "simplex-noise": "^4.0.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/jest": "^29.5.11",
     "@types/node": "^20.10.6",
-    "@types/three": "^0.161.0",
     "jest": "^29.7.0",
     "pkg": "^5.8.1",
     "ts-jest": "^29.1.1",

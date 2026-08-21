@@ -18,6 +18,8 @@ export async function generateRoutes(
   if (settlements.length < 2) return [];
 
   const waterLevel = config.waterLevel || 0.4;
+  const terrainDifficulty = config.terrainDifficulty ?? 0.5;
+  const routeWeighting = config.routeWeighting || 'hybrid';
   const routes: Route[] = [];
 
   const candidateEdges: Edge[] = [];
@@ -64,7 +66,9 @@ export async function generateRoutes(
       { x: to.x, y: to.y },
       heightmap,
       waterLevel,
-      2
+      2,
+      routeWeighting,
+      terrainDifficulty
     );
 
     const simplified = ramerDouglasPeucker(rawPath, 2.5);

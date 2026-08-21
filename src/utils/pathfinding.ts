@@ -85,7 +85,9 @@ export function astar(
   goal: PathPoint,
   heightmap: Heightmap,
   waterLevel: number = 0.4,
-  stepSize: number = 2
+  stepSize: number = 2,
+  routeWeighting: 'distance' | 'terrain-aware' | 'hybrid' = 'hybrid',
+  terrainDifficulty: number = 0.5
 ): PathPoint[] {
   const { width, height, data } = heightmap;
 
@@ -122,8 +124,17 @@ export function astar(
     { dx: -1, dy: -1, dist: 1.414 },
   ];
 
+  const closed = new Uint8Array(gridW * gridH); // visited guard — without this,
+                                                 // disconnected islands make A* re-push
+                                                 // heap nodes forever and OOM the process.
+  let expansions = 0;
+  const maxExpansions = gridW * gridH * 4;
+
   while (openSet.size > 0) {
     const currentIdx = openSet.pop()!;
+    if (closed[currentIdx]) continue; // stale duplicate from the priority queue
+    closed[currentIdx] = 1;
+    if (++expansions > maxExpansions) break; // safety valve
 
     if (currentIdx === goalGIdx) {
       return reconstructPath(cameFrom, currentIdx, gridW, stepSize, start, goal);
@@ -146,12 +157,28 @@ export function astar(
       const neighborIdx = getIdx(ngx, ngy);
       const nextElevation = data[ny * width + nx];
 
-      // Cost Calculation: distance + slope steepness penalty + water penalty
+      // Cost Calculation depends on routeWeighting; terrainDifficulty scales how
+      // strongly terrain is honoured (0 = near-straight, 1 = strongly avoids slope/water).
       const slope = Math.abs(nextElevation - currentElevation);
-      let terrainCost = n.dist * stepSize * (1 + slope * 15);
+      let terrainCost: number;
 
-      if (nextElevation < waterLevel) {
-        terrainCost += 500; // Heavy penalty to keep roads on land
+      if (routeWeighting === 'distance') {
+        // Shortest path, terrain ignored — but still hard-avoid open water so
+        // disconnected islands don't get a straight line drawn across the sea.
+        terrainCost = n.dist * stepSize;
+        if (nextElevation < waterLevel) continue;
+      } else {
+        const slopeGain = routeWeighting === 'terrain-aware'
+          ? 8 + terrainDifficulty * 30
+          : 8 + terrainDifficulty * 15;
+        const waterPenalty = routeWeighting === 'terrain-aware'
+          ? 600 * (0.5 + terrainDifficulty)
+          : 400 * (0.5 + terrainDifficulty);
+
+        terrainCost = n.dist * stepSize * (1 + slope * slopeGain);
+        if (nextElevation < waterLevel) {
+          terrainCost += waterPenalty; // keep roads on land
+        }
       }
 
       const tentativeG = gScore[currentIdx] + terrainCost;

@@ -1,4 +1,4 @@
-import { WorldConfig, Province, Settlement } from '../types';
+import { WorldConfig, Province, Settlement, Heightmap } from '../types';
 import { createPRNG, clamp } from '../utils/math';
 
 interface Point {
@@ -8,13 +8,61 @@ interface Point {
 
 type SettlementType = Settlement['type'];
 
+// Snap a candidate point onto land (or the highest ground available). Settlements
+// should never sit on open water: we expand a search ring until we find a cell
+// above the water level, preferring coasts. If the map is nearly all water, we
+// fall back to the single highest cell in the whole heightmap so the settlement
+// at least lands on the "driest" spot rather than in the sea.
+function preferLand(x: number, y: number, heightmap: Heightmap, waterLevel: number): Point {
+  const { width, height, data } = heightmap;
+  const cx = clamp(Math.round(x), 0, width - 1);
+  const cy = clamp(Math.round(y), 0, height - 1);
+
+  // One full-map pass to record the global highest cell as a guaranteed fallback.
+  let globalDry: Point = { x: cx, y: cy };
+  let globalDryElev = -Infinity;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] > globalDryElev) {
+      globalDryElev = data[i];
+      globalDry = { x: i % width, y: Math.floor(i / width) };
+    }
+  }
+
+  const maxRadius = Math.max(8, Math.floor(Math.min(width, height) * 0.5));
+  let landBest: Point | null = null;
+  let landBestScore = -Infinity;
+
+  for (let radius = 2; radius <= maxRadius; radius += 2) {
+    for (let dy = -radius; dy <= radius; dy += 2) {
+      for (let dx = -radius; dx <= radius; dx += 2) {
+        if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) continue; // ring only
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const e = data[ny * width + nx] || 0;
+        if (e < waterLevel) continue; // never place on open water
+        // Prefer just-above-water (coastal) cells over high peaks.
+        const score = -Math.abs(e - (waterLevel + 0.04));
+        if (score > landBestScore) {
+          landBestScore = score;
+          landBest = { x: nx, y: ny };
+        }
+      }
+    }
+    if (landBest) break; // found land on this ring — stop expanding
+  }
+
+  return landBest ?? globalDry;
+}
+
 export async function generateSettlements(
   config: WorldConfig,
-  provinces: Province[]
+  provinces: Province[],
+  heightmap: Heightmap
 ): Promise<Settlement[]> {
   const width = config.width;
   const height = config.height;
-  const targetCount = config.settlementCount || 30;
+  const waterLevel = config.waterLevel || 0.4;
   const prng = createPRNG(
     typeof config.seed === 'number' ? config.seed + 202 : `${config.seed}-settlements`
   );
@@ -22,13 +70,19 @@ export async function generateSettlements(
   const settlements: Settlement[] = [];
   let nextId = 0;
 
-  for (const province of provinces) {
-    const jitterRadius = Math.min(width, height) * 0.02;
-    const angle = prng() * Math.PI * 2;
-    const distance = prng() * jitterRadius;
+  const numProvinces = provinces.length;
+  if (numProvinces === 0) return settlements;
 
-    const capX = clamp(Math.round(province.centerX + Math.cos(angle) * distance), 0, width - 1);
-    const capY = clamp(Math.round(province.centerY + Math.sin(angle) * distance), 0, height - 1);
+  // `satellitesPerCapital` is the authoritative control. The capital of every
+  // province is always placed; satellites are distributed around them. We do NOT
+  // cap the total at `settlementCount` (that was clipping satellites to zero when
+  // settlementCount < provinces*(1+sats)). `settlementCount` only acts as a floor
+  // so very low values still yield one capital per province.
+  const satsPerCapital = Math.max(0, Math.floor(config.satellitesPerCapital ?? 3));
+  const numCapitals = numProvinces;
+  for (let i = 0; i < numCapitals; i++) {
+    const province = provinces[i];
+    const { x: capX, y: capY } = preferLand(province.centerX, province.centerY, heightmap, waterLevel);
 
     const capital: Settlement = {
       id: nextId++,
@@ -41,179 +95,48 @@ export async function generateSettlements(
     };
 
     settlements.push(capital);
-    if (province.settlements) {
-      province.settlements.push(capital);
-    }
+    province.settlements.push(capital);
   }
 
-  const remainingCount = Math.max(0, targetCount - settlements.length);
-  if (remainingCount > 0 && provinces.length > 0) {
-    const minDistance = Math.sqrt((width * height) / targetCount) * 0.75;
-    
-    const existingPoints: Point[] = settlements.map((s) => ({ x: s.x, y: s.y }));
-    const candidatePoints = poissonDiskSampling(
-      width,
-      height,
-      minDistance,
-      remainingCount,
-      existingPoints,
-      prng
-    );
+  // SATELLITES are placed *around their own capital*, in a jittered ring, so they
+  // branch off the capital rather than being scattered across the whole map (and
+  // then snapped to the coast).
+  if (satsPerCapital > 0 && numCapitals > 0) {
+    const baseR = Math.max(12, Math.min(width, height) * 0.08);
 
-    for (const pt of candidatePoints) {
-      if (settlements.length >= targetCount) break;
+    for (let i = 0; i < numCapitals; i++) {
+      const province = provinces[i];
+      const capital = settlements[i]; // capitals were pushed first, in order
 
-      const nearestProvince = findNearestProvince(pt.x, pt.y, provinces);
-      const isMajor = prng() < 0.3;
-      const type = (isMajor ? 'major' : 'minor') as SettlementType;
+      for (let s = 0; s < satsPerCapital; s++) {
+        const angle = (s / satsPerCapital) * Math.PI * 2 + prng() * 0.7;
+        const radius = baseR * (0.35 + prng() * 1.15);
+        const sx = capital.x + Math.cos(angle) * radius;
+        const sy = capital.y + Math.sin(angle) * radius;
 
-      const sat: Settlement = {
-        id: nextId++,
-        name: generateSettlementName(prng, type),
-        x: Math.round(pt.x),
-        y: Math.round(pt.y),
-        type,
-        parentProvinceId: nearestProvince.id,
-        population: isMajor
-          ? Math.floor(1000 + prng() * 4000)
-          : Math.floor(100 + prng() * 800),
-      };
+        const land = preferLand(sx, sy, heightmap, waterLevel);
+        const isMajor = prng() < 0.3;
+        const type = (isMajor ? 'major' : 'minor') as SettlementType;
 
-      settlements.push(sat);
-      if (nearestProvince.settlements) {
-        nearestProvince.settlements.push(sat);
+        const sat: Settlement = {
+          id: nextId++,
+          name: generateSettlementName(prng, type),
+          x: land.x,
+          y: land.y,
+          type,
+          parentProvinceId: province.id,
+          population: isMajor
+            ? Math.floor(1000 + prng() * 4000)
+            : Math.floor(100 + prng() * 800),
+        };
+
+        settlements.push(sat);
+        province.settlements.push(sat);
       }
     }
   }
 
   return settlements;
-}
-
-function poissonDiskSampling(
-  width: number,
-  height: number,
-  minDist: number,
-  maxPoints: number,
-  initialPoints: Point[],
-  prng: () => number
-): Point[] {
-  const cellSize = minDist / Math.SQRT2;
-  const gridW = Math.ceil(width / cellSize);
-  const gridH = Math.ceil(height / cellSize);
-  const grid: Int32Array = new Int32Array(gridW * gridH).fill(-1);
-
-  const points: Point[] = [];
-  const active: number[] = [];
-
-  function insertPoint(p: Point): number {
-    const idx = points.length;
-    points.push(p);
-    const gx = Math.floor(p.x / cellSize);
-    const gy = Math.floor(p.y / cellSize);
-    if (gx >= 0 && gx < gridW && gy >= 0 && gy < gridH) {
-      grid[gy * gridW + gx] = idx;
-    }
-    return idx;
-  }
-
-  for (const p of initialPoints) {
-    insertPoint(p);
-  }
-
-  if (points.length === 0) {
-    const p0 = { x: prng() * width, y: prng() * height };
-    active.push(insertPoint(p0));
-  } else {
-    for (let i = 0; i < points.length; i++) {
-      active.push(i);
-    }
-  }
-
-  const k = 30;
-  const generated: Point[] = [];
-
-  while (active.length > 0 && generated.length < maxPoints) {
-    const randIdx = Math.floor(prng() * active.length);
-    const pointIdx = active[randIdx];
-    const point = points[pointIdx];
-    let found = false;
-
-    for (let attempt = 0; attempt < k; attempt++) {
-      const angle = prng() * Math.PI * 2;
-      const radius = minDist * (1 + prng());
-      const candidate: Point = {
-        x: point.x + Math.cos(angle) * radius,
-        y: point.y + Math.sin(angle) * radius,
-      };
-
-      if (candidate.x < 0 || candidate.x >= width || candidate.y < 0 || candidate.y >= height) {
-        continue;
-      }
-
-      if (isValidSample(candidate, minDist, cellSize, gridW, gridH, grid, points)) {
-        const newIdx = insertPoint(candidate);
-        active.push(newIdx);
-        generated.push(candidate);
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) {
-      active.splice(randIdx, 1);
-    }
-  }
-
-  return generated;
-}
-
-function isValidSample(
-  pt: Point,
-  minDist: number,
-  cellSize: number,
-  gridW: number,
-  gridH: number,
-  grid: Int32Array,
-  points: Point[]
-): boolean {
-  const gx = Math.floor(pt.x / cellSize);
-  const gy = Math.floor(pt.y / cellSize);
-  const minDistSq = minDist * minDist;
-
-  const minX = Math.max(0, gx - 2);
-  const maxX = Math.min(gridW - 1, gx + 2);
-  const minY = Math.max(0, gy - 2);
-  const maxY = Math.min(gridH - 1, gy + 2);
-
-  for (let y = minY; y <= maxY; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const neighborIdx = grid[y * gridW + x];
-      if (neighborIdx !== -1) {
-        const neighbor = points[neighborIdx];
-        const distSq = (pt.x - neighbor.x) ** 2 + (pt.y - neighbor.y) ** 2;
-        if (distSq < minDistSq) {
-          return false;
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
-function findNearestProvince(x: number, y: number, provinces: Province[]): Province {
-  let nearest = provinces[0];
-  let minDistanceSq = Infinity;
-
-  for (const province of provinces) {
-    const distSq = (x - province.centerX) ** 2 + (y - province.centerY) ** 2;
-    if (distSq < minDistanceSq) {
-      minDistanceSq = distSq;
-      nearest = province;
-    }
-  }
-
-  return nearest;
 }
 
 function generateSettlementName(prng: () => number, type: SettlementType): string {

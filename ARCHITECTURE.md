@@ -2,337 +2,245 @@
 
 ## Overview
 
-worldgen follows a **pipeline architecture**: Config → Generate → Export. Each stage is independent.
+`godot-map-tools` follows a **pipeline architecture**: Config → Generate → Export. Each stage is independent and pure (no global state between them), which keeps the WebUI and CLI interchangeable front-ends over the same core.
 
 ```
-worldgen/
+godot-map-tools/
   src/
-    index.ts           ← Entry point, orchestrates 5 phases
+    index.ts           ← Entry point, orchestrates the 5 phases
     types.ts           ← Shared types
-    config.ts          ← Configuration loading + validation
-    
+    config.ts          ← DEFAULT_CONFIG + loadConfig()/validateConfig() (not yet wired into CLI)
+
     generators/        ← Phase 1-5 actual algorithms
-      heightmap.ts     ← Perlin noise → elevation
-      provinces.ts     ← Voronoi + Lloyd relaxation → regions
-      settlements.ts   ← Poisson disk + clustering → settlements
-      routes.ts        ← MST + A* → trade routes
-      colors.ts        ← Deterministic color assignment
-    
+      heightmap.ts     ← Simplex-noise FBM → elevation
+      provinces.ts     ← Jittered grid + Lloyd relaxation → regions
+      settlements.ts   ← Capital-per-province + Poisson-disk satellites
+      routes.ts        ← Kruskal MST + feeders, A* paths, RDP simplify
+      colours.ts       ← Deterministic color assignment (British spelling)
+      shader_water.glsl           ← Animated ocean (WebGL, used by UI)
+      shader_water_godot.gdshader ← Godot 4 spatial variant (back-pocket, unwired)
+
     exporters/         ← Output formats
-      png.ts           ← Rasterization to image
+      png.ts           ← Rasterization to image (sharp)
       geojson.ts       ← Routes to GeoJSON
-      json.ts          ← Full world state
+      json.ts          ← Lean world state
       gltf.ts          ← 3D mesh export
-      godot.ts         ← Godot scene (future)
-    
+
     utils/             ← Reusable algorithms
-      pathfinding.ts   ← A* implementation
-      geometry.ts      ← Voronoi, distance, intersection
-      rasterization.ts ← Bresenham, flood fill
-      math.ts          ← HSV→RGB, noise helpers
-    
+      math.ts          ← PRNG, FNV-1a hash, clamp, hsv<->rgb
+      pathfinding.ts   ← A* (MinHeap) + RDP + path length
+      geometry.ts      ← Distance, point-in-polygon, computeBorders()
+
     cli/               ← Command-line tool
       commands.ts      ← Commander.js integration
-      formatters.ts    ← Progress bars, output formatting
+      formatters.ts    ← Banner + summary
+
+    server/
+      app.ts           ← Express WebUI backend (POST /api/generate)
+
+  public/
+    index.html         ← WebUI (vanilla + Three.js via CDN import map)
 ```
+
+> **Filename note:** the color module is `colours.ts` (British spelling). It is the only module with that spelling — watch imports.
 
 ## Data Flow
 
 ```
-Config (JSON)
+WorldConfig (JSON)
     ↓
-generateHeightmap()
-    ↓ Float32Array elevation grid
-generateProvinces()
-    ↓ Voronoi cells + Lloyd smoothing
-generateSettlements()
-    ↓ Settlement objects + hierarchy
-generateRoutes()
-    ↓ Route paths + metadata
-computeBorders()
-    ↓ Border edges from Voronoi
+generateHeightmap()            → Heightmap { data: Float32Array, width, height, minElev, maxElev }
     ↓
-World object {config, heightmap, provinces, settlements, routes, borders}
+generateProvinces()            → Province[] { id, color, centerX, centerY, area, cellIndices[], settlements[] }
     ↓
-    ├→ exportPNG()      → heightmap.png, provinces.png, routes.png
-    ├→ exportGeoJSON()  → routes.geojson
-    ├→ exportJSON()     → world.json
-    └→ exportGLTF()     → world.gltf
+generateSettlements()          → Settlement[] { id, x, y, type, parentProvinceId, population, name }
+    ↓
+generateRoutes()               → Route[] { id, type, fromSettlement, toSettlement, path[], distance, terrain_difficulty }
+    ↓
+computeBorders()               → BorderEdge[] { from, to, provinceIds, points[] }
+    ↓
+World { config, heightmap, provinces, settlements, routes, borders }
+    ↓
+    ├→ exportHeightmapPNG()  → heightmap.png
+    ├→ exportProvincesPNG()  → provinces.png
+    ├→ exportRoutesPNG()     → routes.png
+    ├→ exportRoutesGeoJSON() → routes.geojson
+    ├→ exportWorldJSON()     → world.json
+    └→ exportWorldGLTF()     → world.gltf
 ```
+
+**Important ordering caveat:** `generateProvinces()` receives the `Heightmap` and **now uses it** — seeds are snapped onto land (`snapToLand` prefers coasts), Lloyd relaxation samples land cells only, and rasterization skips water entirely. As a result province borders follow coastlines and no province owns open water (`computeBorders` already treats unassigned `-1` water cells as no-border, so coastal province edges terminate at the shoreline). Settlements (via `preferLand`) and routes (via A* water penalty) are also terrain-aware. See *Known Deviations*.
 
 ## Key Components
 
+### utils/math.ts
+
+The deterministic backbone.
+
+- `createPRNG(seed: number | string)` → `() => number` — **Mulberry32** PRNG. String seeds are hashed via **FNV-1a** (`hashString`) first. This is what makes a given seed reproduce the exact same world.
+- `hsvToRgb(h, s, v)` / `rgbToHsv(r, g, b)` — color conversion.
+- `clamp(v, min, max)`.
+
 ### generators/heightmap.ts
 
-**Input:** WorldConfig
-**Output:** Heightmap { data, width, height, minElev, maxElev }
+**Input:** `width`, `height`, `{ seed, octaves, persistence, lacunarity, scale }`
+**Output:** `Heightmap`
 
-Uses Perlin noise (via `perlin-noise` lib):
-1. Create noise generator with seed
-2. Sample octaves (6 by default)
-3. Blend with persistence/lacunarity
-4. Normalize to 0-1
-5. Return Float32Array
+Uses **simplex-noise** (`createNoise2D` from the `simplex-noise` package) driven by the PRNG. Fractal Brownian motion:
 
-```typescript
-// Pseudocode
-for (let y = 0; y < height; y++) {
-  for (let x = 0; x < width; x++) {
-    let value = 0;
-    for (let octave = 0; octave < octaves; octave++) {
-      const freq = Math.pow(2, octave) * scale;
-      const amp = Math.pow(persistence, octave);
-      value += perlin(x * freq, y * freq) * amp;
-    }
-    heightmap[y * width + x] = value / totalAmplitude;
-  }
-}
 ```
+for each pixel (x, y):
+  elevation = 0; amplitude = 1; frequency = scale; total = 0
+  for o in 0..octaves:
+    elevation += noise2D(x*frequency, y*frequency) * amplitude
+    total     += amplitude
+    amplitude *= persistence
+    frequency *= lacunarity
+  data[y*w + x] = (elevation / total + 1) / 2   // normalize to 0..1
+```
+
+minElev / maxElev are tracked across the grid.
+
+> The original prototype referenced the `perlin-noise` library; the shipped code uses `simplex-noise`. Heightmap generation is simplex/FBM, **not** a Voronoi-based terrain.
 
 ### generators/provinces.ts
 
-**Input:** WorldConfig, Heightmap
-**Output:** Province[] with { id, cellIndices, color, settlements, area, centerX, centerY }
+**Input:** `WorldConfig`, `_heightmap` (ignored)
+**Output:** `Province[]`
 
-Uses Voronoi (via `delaunay-fast`):
-1. Generate K random seed points (K = provinceCount)
-2. Compute Delaunay triangulation
-3. Extract Voronoi diagram
-4. Lloyd relaxation: move seeds to cell centroids N times
-5. Assign each pixel to nearest seed
-6. Assign unique colors (see colors.ts)
-7. Return provinces
+1. **Initial seeds** — a *jittered grid* (not Delaunay/Voronoi library): compute `cols × rows` cells from `provinceCount` and aspect ratio, jitter each seed inside its cell.
+2. **Lloyd relaxation** — `lloydIterations = 3` passes: assign a coarse sample grid to the nearest seed, move each seed to the mean of its samples. (Note: `config.lloydIterations` is **not** read here — the count is hardcoded 3.)
+3. **Rasterize** — for every pixel, find the nearest seed using a **spatial hash grid** (buckets of `gridCellSize ≈ √(w·h / count)`; 3×3 neighborhood search, full search fallback). Pixels are assigned to `province.cellIndices` and `area` is counted.
+4. **Recenter** — each province's `centerX/centerY` is recomputed as the true centroid of its assigned pixels.
+5. Color via `colorForProvince(id)` (`colours.ts`).
 
-```typescript
-// Pseudocode
-let seeds = poissonDiskSample(width, height, minDistance);
-for (let iter = 0; iter < lloydIterations; iter++) {
-  const voronoi = computeVoronoi(seeds);
-  seeds = voronoi.cells.map(cell => cell.centroid);
-}
-const provinces = seeds.map((seed, id) => ({
-  id,
-  color: colorForProvince(id),
-  ...voronoi.cells[id]
-}));
-```
+> Province placement is **independent of the heightmap**. There is no edge-falloff, landmass, or archipelago logic despite those params appearing in the WebUI — see *Known Deviations*.
 
 ### generators/settlements.ts
 
-**Input:** WorldConfig, Province[]
-**Output:** Settlement[]
+**Input:** `WorldConfig`, `Province[]`
+**Output:** `Settlement[]`
 
-Hierarchical placement:
-1. Use Poisson disk sampling to place K capitals (K = ceil(settlementCount / (1 + satellitesPerCapital)))
-2. Assign each capital to nearest province
-3. For each capital, place N satellites in that province using Poisson disk
-4. Classify by type (capital vs major vs minor)
-5. Return flattened settlement list
+1. **Capitals** — one per province, placed at the province centroid + small jittered offset (`jitterRadius = min(w,h)*0.02`).
+2. **Satellites** — Bridson **Poisson-disk sampling** fills the remaining `targetCount − provinces` points with a minimum spacing derived from the canvas area. Each point is assigned to its nearest province.
+3. **Classification** — ~30% chance of `major`, else `minor` (capitals are `capital`). Population is drawn from fixed bands (capital 5000–20000, major 1000–5000, minor 100–900).
+4. **Naming** — `generateSettlementName()` concatenates a themed prefix + type-specific suffix (e.g. `Aethelgard`, `Ravenwick`).
 
-```typescript
-// Pseudocode
-const capitals = poissonDiskSample(width, height, capitalDistance);
-const settlements = [];
-
-for (const capital of capitals) {
-  settlements.push({
-    x: capital.x, y: capital.y,
-    type: 'capital',
-    parentProvinceId: nearestProvince(capital),
-    population: 1000
-  });
-  
-  const satelliteArea = provinces[capital.provinceId].boundary;
-  const satellites = poissonDiskSample(satelliteArea, satelliteDistance);
-  
-  for (const sat of satellites.slice(0, satellitesPerCapital)) {
-    settlements.push({
-      x: sat.x, y: sat.y,
-      type: 'minor',
-      parentProvinceId: capital.provinceId,
-      population: 100
-    });
-  }
-}
-```
+Settlements are also pushed onto their parent province's `settlements[]` for downstream use.
 
 ### generators/routes.ts
 
-**Input:** WorldConfig, Settlement[], Heightmap
-**Output:** Route[]
+**Input:** `WorldConfig`, `Settlement[]`, `Heightmap`
+**Output:** `Route[]`
 
-Two-phase routing:
-1. **Build settlement graph** with edge weights (distance + terrain cost)
-2. **MST (Prim's algorithm)** → primary trade routes
-3. **Add secondary routes** → capitals to nearby minors
-4. **A* pathfinding** for each route, constrained to terrain
-5. **Route simplification** (Ramer-Douglas-Peucker)
-6. Return flattened routes
+1. **Candidate edges** — all capital↔capital pairs (weight = Euclidean distance).
+2. **Primary (trade) network** — **Kruskal MST** over the candidates (`kruskalMST`, union-find).
+3. **Secondary (regional) edges** — each non-capital connects to its province's capital.
+4. **Pathfinding** — `astar()` per edge (see `utils/pathfinding.ts`), constrained to land (water penalty) and penalizing slope.
+5. **Simplify** — `ramerDouglasPeucker(path, 2.5)`.
+6. **Difficulty** — `computeDifficulty()` sums per-step elevation deltas and scales into a 1.0–~N score.
 
-```typescript
-// Pseudocode - Phase 1: MST
-const graph = buildWeightedGraph(settlements, heightmap, terrainDifficulty);
-const mst = primsAlgorithm(graph);
+Route types produced: `'trade'` (MST edges), `'regional'` (feeder edges). The `'local'` type exists in `types.ts` but is currently **never generated**.
 
-// Phase 2: A* pathfinding per route
-for (const edge of mst) {
-  const path = astar(edge.from, edge.to, heightmap, terrainCost);
-  const simplified = ramDouglasPeucker(path, epsilon);
-  routes.push({
-    fromSettlement: edge.from,
-    toSettlement: edge.to,
-    path: simplified,
-    terrain_difficulty: computeAverageCost(simplified)
-  });
-}
+### generators/colours.ts
+
+**Input:** `provinceId: number`
+**Output:** `{ r, g, b }`
+
+Deterministic golden-ratio conjugate hue spread:
+
+```
+hue = (id * 0.618033988749895) % 1.0
+sat = 0.70 + (id % 100) / 500     // 0.70–0.90
+val = 0.65 + (id % 50)  / 250     // 0.65–0.85
+return hsvToRgb(hue, sat, val)
 ```
 
-### generators/colors.ts
-
-**Input:** provinceId (number)
-**Output:** { r, g, b }
-
-Deterministic golden-ratio hue spread:
-
-```typescript
-function colorForProvince(id: number): RGB {
-  const hue = (id * 0.618033988749) % 1.0;  // Golden ratio
-  const sat = 0.7 + (id % 100) / 200;       // Slight variation per ID
-  const val = 0.65 + (id % 50) / 150;
-  return hsvToRgb(hue, sat, val);
-}
-```
-
-Guarantees:
-- Every province is visually distinct
-- Deterministic (same ID → same color)
-- No black/white (val clamped 0.65-0.8)
+Guarantees: every province visually distinct, deterministic, no pure black/white.
 
 ### exporters/png.ts
 
-**Input:** World, format ('heightmap' | 'provinces' | 'routes')
-**Output:** PNG file via `sharp`
+`sharp`-backed rasterization.
 
-Uses `sharp` for efficient rasterization:
-```typescript
-// Heightmap: grayscale
-const pngData = sharp(Float32ToUint8(heightmap.data), ...)
-  .png().toFile('heightmap.png');
-
-// Provinces: RGB
-const provincesRGB = new Uint8Array(width * height * 3);
-for (let i = 0; i < width * height; i++) {
-  const color = provinces[provinceMap[i]].color;
-  provincesRGB[i*3] = color.r;
-  provincesRGB[i*3+1] = color.g;
-  provincesRGB[i*3+2] = color.b;
-}
-```
+- `exportHeightmapPNG` — grayscale 0–255.
+- `exportProvincesPNG` — RGB from `province.color`, written per `cellIndices`.
+- `exportRoutesPNG` — dim grayscale terrain + route polylines (trade = gold/thick, regional = blue/thin via Bresenham `drawLine`) + settlement markers (`drawCircle`).
 
 ### exporters/geojson.ts
 
-**Input:** Route[]
-**Output:** GeoJSON FeatureCollection
+`routes → FeatureCollection` of `LineString` features with `id, fromSettlement, toSettlement, type, distance, terrain_difficulty` properties.
 
-```typescript
-// Convert route path to GeoJSON
-const features = routes.map(route => ({
-  type: 'Feature',
-  properties: {
-    id: route.id,
-    type: route.type,
-    distance: route.distance,
-    terrain_difficulty: route.terrain_difficulty
-  },
-  geometry: {
-    type: 'LineString',
-    coordinates: route.path.map(p => [p.x, p.y])
-  }
-}));
-```
+### exporters/json.ts
+
+Lean `world.json`: `config`, `provinces` (id/color/center/area + settlement **ids** only — raw `cellIndices` are dropped to keep the file small), `settlements`, `routes`, `borders`.
 
 ### exporters/gltf.ts
 
-**Input:** World
-**Output:** .gltf file
+Builds a `BufferGeometry` terrain mesh:
 
-Uses three.js to build mesh:
-1. Create BufferGeometry from heightmap vertices
-2. Assign UV coordinates and colors per vertex
-3. Create material with color texture
-4. Export via GLTFExporter
+- Subdivided grid (`step = max(1, width/256)`), positions from heightmap × `heightScale = 120`, centered on origin (x,z), elevation on Y.
+- `POSITION` + `TEXCOORD_0` buffers + triangle indices, embedded as a single base64 `data:` URI buffer (no external `.bin`).
+- **No vertex colors and no water** — unlike the 3D WebUI view. Recolor/water in the target engine.
 
-## Utils
+### utils/pathfinding.ts
 
-### pathfinding.ts
-A* implementation for terrain-aware routing. Key methods:
-- `astar(start, goal, heightmap, costFn)` → Path[]
-- Uses heuristic: Euclidean distance
+- **`astar(start, goal, heightmap, waterLevel, stepSize)`** — A* over an 8-connected grid (step-aligned). Cost = distance × step × (1 + slope×15), plus a `+500` water penalty per water cell (keeps roads on land). Min-heap (`MinHeap<T>`) priority queue. Falls back to a straight `[start, goal]` line if unreachable.
+- **`ramerDouglasPeucker(points, epsilon)`** — recursive polyline simplification.
+- **`calculatePathDistance(points)`** — summed Euclidean length.
 
-### geometry.ts
-Reusable math:
-- `distance(p1, p2)` → number
-- `pointInPolygon(p, poly)` → boolean
-- `lineIntersect(l1, l2)` → Point | null
-- `voronoiEdges(diagram)` → Edge[] (for borders)
+### utils/geometry.ts
 
-### rasterization.ts
-- `bresenham(p1, p2)` → Point[] (line rasterization)
-- `floodFill(x, y, image, value)` → void (region filling)
-- `rasterizePolygon(poly, image)` → void
+- `distance(p1, p2)`, `pointInPolygon(p, poly)`.
+- `computeBorders(provinces, width?, height?)` — scans a province-id grid (step 2), records adjacent differing province pairs, RDP-simplifies each shared boundary, and emits `BorderEdge[]`.
 
-### math.ts
-- `hsvToRgb(h, s, v)` → RGB
-- `rgbToHsv(r, g, b)` → HSV
-- `clamp(v, min, max)` → number
+### server/app.ts
+
+Express app. `POST /api/generate` builds a `WorldConfig` from the request body (see *Known Deviations* for which fields are honored), calls `generateWorld()`, and returns a JSON payload the WebUI consumes directly (heightmap `data` as an array, provinces/settlements/routes/borders). Serves `public/` statically.
 
 ## Control Flow
 
-Entry: `src/cli/commands.ts` calls `generate(config)`
+Entry: `src/cli/commands.ts` → `generate` action → `generateWorld(config)` (`src/index.ts`):
 
 ```
-generate(config):
-  1. generateHeightmap(config)
-     → heightmap: Float32Array
-  
-  2. generateProvinces(config, heightmap)
-     → provinces: Province[]
-  
-  3. generateSettlements(config, provinces)
-     → settlements: Settlement[]
-  
-  4. generateRoutes(config, settlements, heightmap)
-     → routes: Route[]
-  
-  5. computeBorders(provinces)
-     → borders: BorderEdge[]
-  
-  → return World { config, heightmap, provinces, settlements, routes, borders }
-     ↓
-  exporterOrchestrator(world, outputDir):
-    → exportPNG(world, 'heightmap') → output/heightmap.png
-    → exportPNG(world, 'provinces') → output/provinces.png
-    → exportPNG(world, 'routes') → output/routes.png
-    → exportGeoJSON(world.routes) → output/routes.geojson
-    → exportJSON(world) → output/world.json
-    → exportGLTF(world) → output/world.gltf
+generateWorld(config):
+  1. generateHeightmap(width, height, { seed, octaves, persistence, lacunarity, scale })
+  2. generateProvinces(config, heightmap)        // land-aware: seeds snapped to coast, relaxation + rasterization over land only
+  3. generateSettlements(config, provinces, heightmap)  // capitals/satellites snap to land via preferLand
+  4. generateRoutes(config, settlements, heightmap)     // A* avoids water/slope
+  5. computeBorders(provinces, width, height)
+  → World { config, heightmap, provinces, settlements, routes, borders }
+
+exporterOrchestrator(world, outputDir):
+  → heightmap.png / provinces.png / routes.png
+  → routes.geojson / world.json / world.gltf
 ```
+
+The WebUI reuses the exact same `generateWorld()` via `server/app.ts`.
 
 ## Performance Notes
 
 **Linear in:**
 - Heightmap pixels (width × height)
-- Voronoi cells (provinceCount)
-- Settlement count
+- Province count (rasterization is O(pixels), seed search is spatial-hashed)
+- Settlement count (Poisson-disk is near-linear in output points)
 
 **Superlinear in:**
-- Route complexity (A* scales with path length)
-- Lloyd iterations (repeated Voronoi)
+- Route complexity (A* scales with path length; MST is near-linear)
+- Lloyd iterations (repeated nearest-seed passes)
 
-**Parallelizable:**
-- Route generation (each route independently)
-- Exporting formats (independent file writes)
+**Parallelizable (future):**
+- Per-route A* (each route independent)
+- Per-format export (independent file writes)
 
-Current: Single-threaded, ~3-8s for typical worlds.
+Currently single-threaded. Real-world timings depend on resolution and route count; measure with `npm run generate` at your target size.
 
-With worker threads: Could halve route generation time.
+## Known Deviations (documentation vs. reality)
+
+These are real gaps in the shipped code, recorded so the docs don't overclaim:
+
+1. **Provinces are land-only but not slope-aware** — `generateProvinces()` now uses the `heightmap`: seeds are snapped onto land (coasts preferred, `snapToLand`), Lloyd relaxation samples land cells only, and rasterization skips water. Borders therefore follow coastlines and no province owns the sea. They still do not weight by elevation, so a tall mountain range can sit inside one province.
+2. **`/api/generate` now honors the full param set** (fixed in v0.0.2) — reads all WebUI controls including `mapStyle`, `edgeFalloff`, `landmassCount`, `lloydIterations`, `satellitesPerCapital`, `capitalProminence`, `terrainDifficulty`, and `routeWeighting` (no longer hard-coded to `hybrid`).
+3. **`'local'` route type** is declared in `types.ts` but never produced by `routes.ts`.
+4. **`gltf.ts` has no colors/water** — differs from the 3D WebUI view.
+5. **`config.ts` is orphaned** — `loadConfig()`/`validateConfig()` exist but `commands.ts` loads/validates config files inline and does not call them.
+6. **Earlier doc references to `delaunay-fast`, `three`, `@types/three`, and the `expres` typo were removed** as dead dependencies; the WebUI loads Three.js from a CDN. The prototype's "Perlin" reference was wrong — the code uses `simplex-noise`.
