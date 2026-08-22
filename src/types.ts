@@ -21,8 +21,11 @@ export interface WorldConfig {
   terrainDifficulty: number; // how much terrain affects routes (0-1)
 
   mapStyle: 'continental' | 'archipelago';
-  edgeFalloff: number; // 0-1, how sharply land meets water at map edges
+  edgeFalloff: number; // 0-1, how sharply land meets water at the map edges
   landmassCount: number; // number of continents/island clusters (1 = single landmass)
+  polarEffect: number; // 0-1, strength of polar ice caps (0 = none, 1 = strong)
+  riverDensity: number; // 0-1, how many rivers to carve (scales with land area)
+  terrainAwareBorders: boolean; // route province borders along ridge/watershed lines
 }
 
 export interface Heightmap {
@@ -63,19 +66,39 @@ export interface Route {
   terrain_difficulty: number;
 }
 
+export interface River {
+  id: number;
+  // Ordered source → mouth (source = headwater, the lowest-accumulation cell;
+  // mouth = where it reaches water or the map edge).
+  path: Array<{x: number; y: number}>;
+  sourceX: number;
+  sourceY: number;
+  mouthX: number;
+  mouthY: number;
+  length: number; // in pixels
+  order: number;  // Strahler-ish stream order (1 = smallest tributary)
+  // Width per path point (px), derived from flow accumulation so the river is
+  // thin at its headwaters and widens toward the mouth (jumping where
+  // tributaries join). Parallel to `path`.
+  widths?: number[];
+}
+
 export interface World {
   config: WorldConfig;
   heightmap: Heightmap;
   provinces: Province[];
   settlements: Settlement[];
   routes: Route[];
+  rivers: River[];
   borders: BorderEdge[];
 }
 
 export interface BorderEdge {
+  id: number;
   from: {x: number; y: number};
   to: {x: number; y: number};
   provinceIds: [number, number];
+  points?: {x: number; y: number}[];
 }
 
 // Export formats

@@ -80,15 +80,28 @@ export async function generateSettlements(
   // so very low values still yield one capital per province.
   const satsPerCapital = Math.max(0, Math.floor(config.satellitesPerCapital ?? 3));
   const numCapitals = numProvinces;
+  const baseR = Math.max(12, Math.min(width, height) * 0.08); // satellite ring radius
+
+  // `capitalProminence` controls how far the capital sits from the province
+  // centroid (0 = centered/clustered, 1 = pushed toward the province edge).
+  // We estimate the province radius from its area and offset along a
+  // deterministic per-province angle.
+  const prominence = Math.max(0, Math.min(1, config.capitalProminence ?? 0.5));
+
   for (let i = 0; i < numCapitals; i++) {
     const province = provinces[i];
-    const { x: capX, y: capY } = preferLand(province.centerX, province.centerY, heightmap, waterLevel);
+    const provinceRadius = Math.sqrt(province.area / Math.PI);
+    const spreadFactor = prominence * provinceRadius * 0.45;
+    const spreadAngle = (province.id * 2.399963) + prng() * 0.5; // golden-angle-ish + jitter
+    const capX = province.centerX + Math.cos(spreadAngle) * spreadFactor;
+    const capY = province.centerY + Math.sin(spreadAngle) * spreadFactor;
+    const { x: landX, y: landY } = preferLand(capX, capY, heightmap, waterLevel);
 
     const capital: Settlement = {
       id: nextId++,
       name: generateSettlementName(prng, 'capital' as SettlementType),
-      x: capX,
-      y: capY,
+      x: landX,
+      y: landY,
       type: 'capital' as SettlementType,
       parentProvinceId: province.id,
       population: Math.floor(5000 + prng() * 15000),
@@ -102,8 +115,6 @@ export async function generateSettlements(
   // branch off the capital rather than being scattered across the whole map (and
   // then snapped to the coast).
   if (satsPerCapital > 0 && numCapitals > 0) {
-    const baseR = Math.max(12, Math.min(width, height) * 0.08);
-
     for (let i = 0; i < numCapitals; i++) {
       const province = provinces[i];
       const capital = settlements[i]; // capitals were pushed first, in order
@@ -134,6 +145,32 @@ export async function generateSettlements(
         province.settlements.push(sat);
       }
     }
+  }
+
+  // After placing capitals + satellites, if settlementCount is higher than
+  // the computed total, add extra minor settlements spread across provinces
+  // so settlementCount acts as a target floor.
+  const targetCount = Math.max(settlements.length, config.settlementCount || 0);
+  let provinceIdx = 0;
+  while (settlements.length < targetCount) {
+    const province = provinces[provinceIdx % numProvinces];
+    const capital = settlements[provinceIdx % numCapitals];
+    const angle = prng() * Math.PI * 2;
+    const radius = baseR * (0.5 + prng() * 1.0);
+    const sx = capital.x + Math.cos(angle) * radius;
+    const sy = capital.y + Math.sin(angle) * radius;
+
+    const land = preferLand(sx, sy, heightmap, waterLevel);
+    settlements.push({
+      id: nextId++,
+      name: generateSettlementName(prng, 'minor'),
+      x: land.x,
+      y: land.y,
+      type: 'minor',
+      parentProvinceId: province.id,
+      population: Math.floor(100 + prng() * 800),
+    });
+    provinceIdx++;
   }
 
   return settlements;

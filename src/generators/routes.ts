@@ -71,6 +71,9 @@ export async function generateRoutes(
       terrainDifficulty
     );
 
+    // Skip cross-water routes that have no land path (disconnected islands).
+    if (!rawPath || rawPath.length < 2) continue;
+
     const simplified = ramerDouglasPeucker(rawPath, 2.5);
     const distance = calculatePathDistance(simplified);
 

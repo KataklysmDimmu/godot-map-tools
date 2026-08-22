@@ -1,8 +1,9 @@
-import { WorldConfig, Heightmap, Province, Settlement, Route, BorderEdge, World } from './types';
+import { WorldConfig, Heightmap, Province, Settlement, Route, BorderEdge, World, River } from './types'
 import { generateHeightmap } from './generators/heightmap';
 import { generateProvinces } from './generators/provinces';
 import { generateSettlements } from './generators/settlements';
 import { generateRoutes } from './generators/routes';
+import { generateRivers } from './generators/hydrology';
 import { computeBorders } from './utils/geometry';
 
 export async function generateWorld(config: WorldConfig): Promise<World> {
@@ -16,7 +17,12 @@ export async function generateWorld(config: WorldConfig): Promise<World> {
     mapStyle: config.mapStyle,
     edgeFalloff: config.edgeFalloff,
     landmassCount: config.landmassCount,
+    polarEffect: config.polarEffect,
+    waterLevel: config.waterLevel,
   });
+
+  // Phase 1b: Rivers (hydrology) — independent of provinces/settlements.
+  const rivers: River[] = generateRivers(config, heightmap);
 
   // Phase 2: Provinces
   const provinces: Province[] = await generateProvinces(config, heightmap);
@@ -27,8 +33,15 @@ export async function generateWorld(config: WorldConfig): Promise<World> {
   // Phase 4: Routes
   const routes: Route[] = await generateRoutes(config, settlements, heightmap);
 
-  // Phase 5: Borders
-  const borders: BorderEdge[] = computeBorders(provinces, config.width, config.height);
+  // Phase 5: Borders (terrain-aware when enabled)
+  const borders: BorderEdge[] = computeBorders(
+    provinces,
+    config.width,
+    config.height,
+    config.terrainAwareBorders ? heightmap : undefined,
+    config.terrainDifficulty ?? 0.5,
+    config.waterLevel ?? 0.4,
+  );
 
   return {
     config,
@@ -36,6 +49,7 @@ export async function generateWorld(config: WorldConfig): Promise<World> {
     provinces,
     settlements,
     routes,
+    rivers,
     borders,
   };
 }

@@ -9,7 +9,7 @@ export const DEFAULT_CONFIG: WorldConfig = {
   seed: 42,
   width: 2048,        // pixels
   height: 2048,       // pixels
-  scale: 1,           // 1 pixel = 1 cell
+  scale: 0.002,       // noise frequency: small = broad continents, large = noisy static
 
   // Heightmap generation (Simplex-noise FBM)
   heightmapOctaves: 6,
@@ -34,6 +34,9 @@ export const DEFAULT_CONFIG: WorldConfig = {
   mapStyle: 'continental',
   edgeFalloff: 0.4,
   landmassCount: 2,
+  polarEffect: 0.5,
+  riverDensity: 0.4,
+  terrainAwareBorders: true,
 };
 
 export async function loadConfig(configPath: string): Promise<WorldConfig> {

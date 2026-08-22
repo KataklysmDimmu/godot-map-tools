@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { generateWorld } from '../index';
 import { WorldConfig } from '../types';
+import { DEFAULT_CONFIG, loadConfig, validateConfig } from '../config';
 import { exportHeightmapPNG, exportProvincesPNG, exportRoutesPNG } from '../exporters/png';
 import { exportRoutesGeoJSON } from '../exporters/geojson';
 import { exportWorldJSON } from '../exporters/json';
@@ -14,28 +15,10 @@ import { createServer } from '../server/app'
 
 const program = new Command();
 
-const DEFAULT_CONFIG: WorldConfig = {
-  seed: 42,
-  width: 1024,
-  height: 1024,
-  scale: 0.003,
-  heightmapOctaves: 6,
-  heightmapPersistence: 0.5,
-  heightmapLacunarity: 2.0,
-  provinceCount: 20,
-  settlementCount: 30,
-  waterLevel: 0.4,
-  routeWeighting: 'hybrid',
-  terrainDifficulty: 0.5,
-  mapStyle: 'continental',
-  edgeFalloff: 0.4,
-  landmassCount: 2,
-} as WorldConfig;
-
 program
   .name('godot-map-tools')
   .description('Procedural world generator for game development.')
-  .version('0.1.0');
+  .version('0.0.2');
 
 program
   .command('generate')
@@ -47,15 +30,17 @@ program
   .option('-h, --height <pixels>', 'Height of world in pixels')
   .option('-p, --provinces <count>', 'Number of provinces')
   .option('--settlements <count>', 'Number of settlements')
+  .option('--landmassCount <count>', 'Number of landmasses')
   .action(async (options) => {
     printBanner();
     const startTime = Date.now();
 
-    let config: WorldConfig = { ...DEFAULT_CONFIG };
+    let config: WorldConfig;
 
     if (options.config) {
-      const fileData = await fs.readFile(path.resolve(options.config), 'utf-8');
-      config = { ...config, ...JSON.parse(fileData) };
+      config = await loadConfig(path.resolve(options.config));
+    } else {
+      config = { ...DEFAULT_CONFIG };
     }
 
     if (options.seed !== undefined) config.seed = isNaN(Number(options.seed)) ? options.seed : Number(options.seed);
@@ -63,6 +48,9 @@ program
     if (options.height) config.height = parseInt(options.height, 10);
     if (options.provinces) config.provinceCount = parseInt(options.provinces, 10);
     if (options.settlements) config.settlementCount = parseInt(options.settlements, 10);
+    if (options.landmassCount) config.landmassCount = parseInt(options.landmassCount, 10);
+
+    validateConfig(config);
 
     const outDir = path.resolve(options.output);
     await fs.mkdir(outDir, { recursive: true });
@@ -100,9 +88,9 @@ program
   .description('Validate a world config file')
   .action(async (configPath) => {
     try {
-      const data = await fs.readFile(path.resolve(configPath), 'utf-8');
-      JSON.parse(data);
-      console.log(`Config file "${configPath}" is valid JSON.`);
+      const config = await loadConfig(path.resolve(configPath));
+      validateConfig(config);
+      console.log(`Config file "${configPath}" is valid.`);
     } catch (err: any) {
       console.error(`Validation error in "${configPath}":`, err.message);
       process.exit(1);

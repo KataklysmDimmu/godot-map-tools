@@ -88,7 +88,7 @@ export function astar(
   stepSize: number = 2,
   routeWeighting: 'distance' | 'terrain-aware' | 'hybrid' = 'hybrid',
   terrainDifficulty: number = 0.5
-): PathPoint[] {
+): PathPoint[] | null {
   const { width, height, data } = heightmap;
 
   // Align start/goal to step grid
@@ -194,8 +194,10 @@ export function astar(
     }
   }
 
-  // Fallback direct path if unreachable
-  return [start, goal];
+  // Unreachable (e.g. settlements on disconnected islands with no land path).
+  // Return null so callers can drop the route rather than drawing a straight
+  // line across the ocean.
+  return null;
 }
 
 function reconstructPath(
